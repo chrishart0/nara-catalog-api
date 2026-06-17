@@ -1,0 +1,56 @@
+{
+  "body": {
+    "hits": {
+      "total": {"value": 2},
+      "hits": [
+        {
+          "_id": "235845496",
+          "_source": {
+            "record": {
+              "naId": 235845496,
+              "title": "Volume 994: April 22 to 30, 1903",
+              "levelOfDescription": "fileUnit",
+              "recordGroupNumber": "59",
+              "availableOnline": true,
+              "digitalObjectCount": 2,
+              "digitalObjects": [
+                {
+                  "objectType": "Image",
+                  "title": "Page 1",
+                  "objectUrl": "https://catalog.archives.gov/fold3/page1.jpg",
+                  "thumbnailUrl": "https://catalog.archives.gov/fold3/page1-thumb.jpg",
+                  "extractedText": "Arthur Davis Variell"
+                },
+                {
+                  "objectType": "Image",
+                  "title": "Page 2",
+                  "objectUrl": "https://catalog.archives.gov/fold3/page2.jpg"
+                }
+              ],
+              "ancestors": [
+                {"naId": "100", "title": "Record Group 59", "levelOfDescription": "recordGroup"},
+                {"naId": "200", "title": "Passport Applications", "levelOfDescription": "series"}
+              ]
+            }
+          }
+        },
+        {
+          "_id": "143620632",
+          "source": {
+            "metadata": {
+              "record": {
+                "naId": "143620632",
+                "title": "Passport Applications - Special Series: New York 250-499",
+                "descriptionType": "fileUnit",
+                "availableOnline": true,
+                "digitalObjects": [
+                  {"objectType": "Image", "objectUrl": "https://example.test/ancestry/page1.tif"}
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

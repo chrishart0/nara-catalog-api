@@ -1,0 +1,20 @@
+{
+  "body": {
+    "hits": {
+      "total": {"value": 1},
+      "hits": [
+        {
+          "_id": "999",
+          "_source": {
+            "record": {
+              "naId": "999",
+              "title": "Offline archival record",
+              "levelOfDescription": "item",
+              "availableOnline": false
+            }
+          }
+        }
+      ]
+    }
+  }
+}
