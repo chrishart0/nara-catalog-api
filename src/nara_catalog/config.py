@@ -30,8 +30,11 @@ def get_api_key(secret_file: str | None = None, project_dir: Path | None = None)
             return values["NARA_API_KEY"], str(path)
         return None, str(path)
 
-    project_env_file = (project_dir or Path.cwd()) / ".env"
-    for candidate in (project_env_file, DEFAULT_SECRET_FILE):
+    candidates = []
+    if project_dir:
+        candidates.append(project_dir / ".env")
+    candidates.append(DEFAULT_SECRET_FILE)
+    for candidate in candidates:
         values = load_env_file(candidate)
         if values.get("NARA_API_KEY"):
             return values["NARA_API_KEY"], str(candidate)

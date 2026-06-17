@@ -31,3 +31,14 @@ def test_get_api_key_uses_project_env(monkeypatch, tmp_path: Path) -> None:
 
     assert key == "project-key"
     assert source == str(tmp_path / ".env")
+
+
+def test_get_api_key_does_not_read_cwd_env_without_project_dir(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("NARA_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("nara_catalog.config.DEFAULT_SECRET_FILE", tmp_path / "missing-global.env")
+    (tmp_path / ".env").write_text("NARA_API_KEY=project-key\n")
+
+    key, _source = get_api_key()
+
+    assert key is None

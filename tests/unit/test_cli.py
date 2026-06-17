@@ -44,7 +44,7 @@ def test_search_download_dir_prints_totals(monkeypatch, capsys, tmp_path) -> Non
             service = NaraCatalogService(FakeClient(load_fixture("search_variell_passport.json")), key_source="test")
             return service.search_records(request)
 
-        def download_digital_objects(self, na_id, destination, *, selection=None, force=False, timeout=60):
+        def download_digital_objects(self, na_id, destination, *, selection=None, force=False, timeout=60, max_bytes=None):
             return DownloadManifest(
                 na_id=na_id,
                 destination=str(destination),
@@ -74,6 +74,48 @@ def test_search_count_text_includes_timestamp(monkeypatch, capsys) -> None:
     assert status == 0
     assert "Total: 0" in out
     assert "Fetched epoch:" in out
+
+
+def test_search_count_can_emit_negative_search_draft(monkeypatch, capsys) -> None:
+    class FakeService:
+        def count_records(self, request, *, timeout=None):
+            service = NaraCatalogService(FakeClient(load_fixture("search_empty.json")), key_source="test")
+            return service.count_records(request)
+
+        def make_negative_search_record(self, request, *, threshold=0, timeout=None):
+            service = NaraCatalogService(FakeClient(load_fixture("search_empty.json")), key_source="test")
+            return service.make_negative_search_record(request, threshold=threshold)
+
+    monkeypatch.setattr(cli, "service_from_args", lambda args: FakeService())
+
+    status = cli.main(["search", "--query", "Nope", "--count", "--negative-search-draft"])
+
+    out = capsys.readouterr().out
+    assert status == 0
+    assert "NARA Negative Search Draft" in out
+
+
+def test_search_download_refuses_too_many_objects_without_confirmation(monkeypatch, capsys, tmp_path) -> None:
+    class FakeService:
+        def search_records(self, request, *, timeout=None):
+            service = NaraCatalogService(FakeClient(load_fixture("search_variell_passport.json")), key_source="test")
+            return service.search_records(request)
+
+    monkeypatch.setattr(cli, "service_from_args", lambda args: FakeService())
+
+    status = cli.main([
+        "search",
+        "--query",
+        "Variell",
+        "--download-dir",
+        str(tmp_path),
+        "--download-object-limit",
+        "1",
+    ])
+
+    err = capsys.readouterr().err
+    assert status == 2
+    assert "Refusing to download up to" in err
 
 
 class FakeClient:

@@ -2,38 +2,56 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from .models import NegativeSearchDraft, RecordResponse, SearchRequest, SourcePacket, to_plain
+from .models import DownloadManifest, NegativeSearchDraft, RecordResponse, SearchRequest, SourcePacket, to_plain
 
 RIGHTS_NOTE = (
     "NARA Catalog metadata and public digital objects should be attributed to the "
     "National Archives and Records Administration. Verify item-level rights and use "
     "restrictions before publication."
 )
+SOURCE_ID_PATTERN = re.compile(r"^[SRCN]\d{3}[A-Za-z0-9_-]*$")
 
 
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def make_source_packet(record: RecordResponse, source_id: str, archive_root: Path) -> SourcePacket:
+def validate_source_id(source_id: str) -> str:
+    if not SOURCE_ID_PATTERN.fullmatch(source_id):
+        raise ValueError("source_id must match S###, R###, C###, or N### with optional letters/numbers/_/- suffix")
+    return source_id
+
+
+def make_source_packet(
+    record: RecordResponse,
+    source_id: str,
+    archive_root: Path,
+    *,
+    download_manifest: DownloadManifest | None = None,
+) -> SourcePacket:
     if not record.found or not record.record or not record.compact:
         raise ValueError(f"NAID {record.na_id} was not found")
-    packet_dir = archive_root / "archive" / "nara" / source_id
+    source_id = validate_source_id(source_id)
+    archive_base = (archive_root / "archive" / "nara").resolve()
+    packet_dir = (archive_base / source_id).resolve()
+    if not packet_dir.is_relative_to(archive_base):
+        raise ValueError("source packet path must stay under archive/nara")
     packet_dir.mkdir(parents=True, exist_ok=True)
     raw_text = json.dumps(to_plain(record.raw), indent=2, ensure_ascii=False) + "\n"
     raw_json_path = packet_dir / f"{source_id}-nara-{record.na_id}.json"
-    if raw_json_path.exists():
-        raise FileExistsError(f"Refusing to overwrite existing source packet file: {raw_json_path}")
-    raw_json_path.write_text(raw_text)
-    raw_hash = sha256_text(raw_text)
     packet_path = packet_dir / f"{source_id}-nara-{record.na_id}-source-packet.md"
+    _preflight_no_overwrite([raw_json_path, packet_path])
+    raw_hash = sha256_text(raw_text)
+    downloaded_paths, downloaded_hashes, downloaded_text, manifest_rows = _downloaded_object_metadata(download_manifest)
     registry_stub = _registry_stub(record, source_id, raw_json_path, raw_hash)
-    manifest_rows = [f"| {raw_json_path} | {raw_hash} | NARA API raw JSON for NAID {record.na_id} |"]
+    manifest_rows = [f"| {raw_json_path} | {raw_hash} | NARA API raw JSON for NAID {record.na_id} |", *manifest_rows]
     packet_text = (
         f"# {source_id} NARA Source Packet\n\n"
         f"- Source ID: {source_id}\n"
@@ -46,7 +64,7 @@ def make_source_packet(record: RecordResponse, source_id: str, archive_root: Pat
         f"- Raw JSON: `{raw_json_path}`\n"
         f"- Raw JSON SHA-256: `{raw_hash}`\n\n"
         "## Downloaded Objects\n\n"
-        "None recorded in this source packet. Use `images --download-dir` to download digital objects, then register those files in the manifest.\n\n"
+        f"{downloaded_text}\n\n"
         "## Suggested Registry Stub\n\n"
         "```yaml\n"
         f"{registry_stub}"
@@ -57,15 +75,20 @@ def make_source_packet(record: RecordResponse, source_id: str, archive_root: Pat
         + RIGHTS_NOTE
         + "\n\n## Gaps\n\n- Verify citation details and item-level rights.\n\n## Next Actions\n\n- Extract facts into the fact ledger before narrative use.\n"
     )
-    packet_path.write_text(packet_text)
+    _atomic_write_text(raw_json_path, raw_text)
+    try:
+        _atomic_write_text(packet_path, packet_text)
+    except Exception:
+        raw_json_path.unlink(missing_ok=True)
+        raise
     return SourcePacket(
         source_id=source_id,
         na_id=record.na_id,
         catalog_url=record.compact.catalog_url or "",
         raw_json_path=str(raw_json_path),
         raw_json_sha256=raw_hash,
-        downloaded_object_paths=[],
-        downloaded_object_sha256={},
+        downloaded_object_paths=downloaded_paths,
+        downloaded_object_sha256=downloaded_hashes,
         packet_path=str(packet_path),
         suggested_registry_stub=registry_stub,
         suggested_manifest_rows=manifest_rows,
@@ -115,3 +138,42 @@ def _registry_stub(record: RecordResponse, source_id: str, raw_json_path: Path, 
         f"    {json.dumps(str(raw_json_path))}: {json.dumps(raw_hash)}\n"
         "  status: not-yet-verified\n"
     )
+
+
+def _preflight_no_overwrite(paths: list[Path]) -> None:
+    for path in paths:
+        if path.exists():
+            raise FileExistsError(f"Refusing to overwrite existing source packet file: {path}")
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    with temp_path.open("x", encoding="utf-8") as handle:
+        handle.write(text)
+    temp_path.replace(path)
+
+
+def _downloaded_object_metadata(download_manifest: DownloadManifest | None) -> tuple[list[str], dict[str, str], str, list[str]]:
+    if not download_manifest:
+        return (
+            [],
+            {},
+            "None recorded in this source packet. Use `images --download-dir` to download digital objects, then register those files in the manifest.",
+            [],
+        )
+    paths: list[str] = []
+    hashes: dict[str, str] = {}
+    rows: list[str] = []
+    lines: list[str] = []
+    for result in download_manifest.results:
+        if result.status != "downloaded" and result.status != "skipped_exists":
+            continue
+        if not result.local_path or not result.sha256:
+            continue
+        paths.append(result.local_path)
+        hashes[result.local_path] = result.sha256
+        rows.append(f"| {result.local_path} | {result.sha256} | NARA digital object {result.index} for NAID {download_manifest.na_id} |")
+        lines.append(f"- `{result.local_path}` SHA-256 `{result.sha256}`")
+    if not lines:
+        lines.append("Download manifest was provided, but it contained no downloaded or existing hashed objects.")
+    return paths, hashes, "\n".join(lines), rows

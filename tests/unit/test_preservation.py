@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nara_catalog.models import SearchRequest
+import pytest
+
+from nara_catalog.models import DownloadManifest, DownloadResult, SearchRequest
 from nara_catalog.preservation import make_negative_search_draft
 from nara_catalog.service import NaraCatalogService
 from tests.conftest import load_fixture
@@ -38,3 +40,39 @@ def test_source_packet_writes_raw_json_and_markdown(tmp_path: Path) -> None:
     packet_text = Path(packet.packet_path).read_text()
     assert "API path" in packet_text
     assert "naId_is" in packet_text
+
+
+def test_source_packet_rejects_invalid_source_id(tmp_path: Path) -> None:
+    service = NaraCatalogService(FakeClient(load_fixture("record_passport_with_digital_objects.json")), key_source="test")
+
+    with pytest.raises(ValueError, match="source_id"):
+        service.make_source_packet("235845496", "../S061", tmp_path)
+
+
+def test_source_packet_refuses_existing_markdown_without_writing_raw_json(tmp_path: Path) -> None:
+    service = NaraCatalogService(FakeClient(load_fixture("record_passport_with_digital_objects.json")), key_source="test")
+    packet_dir = tmp_path / "archive" / "nara" / "S061"
+    packet_dir.mkdir(parents=True)
+    existing_packet = packet_dir / "S061-nara-235845496-source-packet.md"
+    existing_packet.write_text("preserved")
+
+    with pytest.raises(FileExistsError):
+        service.make_source_packet("235845496", "S061", tmp_path)
+
+    assert existing_packet.read_text() == "preserved"
+    assert not (packet_dir / "S061-nara-235845496.json").exists()
+
+
+def test_source_packet_includes_download_manifest_paths_and_hashes(tmp_path: Path) -> None:
+    service = NaraCatalogService(FakeClient(load_fixture("record_passport_with_digital_objects.json")), key_source="test")
+    manifest = DownloadManifest(
+        na_id="235845496",
+        destination=str(tmp_path / "downloads"),
+        results=[DownloadResult(1, "https://example.test/1.jpg", str(tmp_path / "downloads" / "1.jpg"), "abc123", "downloaded", 3)],
+    )
+
+    packet = service.make_source_packet("235845496", "S061", tmp_path, download_manifest=manifest)
+
+    assert packet.downloaded_object_paths == [str(tmp_path / "downloads" / "1.jpg")]
+    assert packet.downloaded_object_sha256[str(tmp_path / "downloads" / "1.jpg")] == "abc123"
+    assert "abc123" in Path(packet.packet_path).read_text()

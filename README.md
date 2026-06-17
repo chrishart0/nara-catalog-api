@@ -34,11 +34,17 @@ python nara_api.py search --query 'Variell AND passport' --online --full
 # Count-only scoping for negative-search work
 python nara_api.py search --query 'Variell' --online --count
 
+# Count plus negative-search draft
+python nara_api.py search --query '"Arthur D. Variell" passport' --online --count --negative-search-draft
+
 # Fetch a specific record by NAID
 python nara_api.py record --naid 235845496 --save /tmp/nara-235845496.json
 
 # List digital object URLs in a flat format
 python nara_api.py images --naid 235845496
+
+# List digital objects and mark known local downloads
+python nara_api.py images --naid 235845496 --status-dir /tmp/nara-235845496
 
 # Download selected digital objects without overwriting existing files
 python nara_api.py images --naid 235845496 --download-dir /tmp/nara-235845496 --range 1-5
@@ -51,6 +57,9 @@ python nara_api.py related --naid 235845496 --mode same-series --limit 10
 
 # Repository-style source packet draft
 python nara_api.py source-packet --naid 235845496 --source-id S061 --archive-root ../..
+
+# Source packet including a previous download manifest
+python nara_api.py source-packet --naid 235845496 --source-id S061 --archive-root ../.. --download-manifest /tmp/nara-235845496/nara-235845496-download-manifest.json
 
 # Negative-search draft
 python nara_api.py negative-search --query '"Arthur D. Variell" passport' --online
@@ -106,10 +115,13 @@ Downloads:
 - require an explicit destination;
 - do not overwrite existing files unless `--force` is passed;
 - compute SHA-256 for downloaded or existing skipped files;
+- stream to temporary files before atomically moving them into place;
 - write `nara-{naid}-download-manifest.json`.
 
 When downloading from search results, use `--download-record-limit` and `--yes`
-to make bulk intent explicit.
+to make bulk intent explicit. Search-result downloads also enforce
+`--download-object-limit` unless `--range` or `--yes` is supplied. Use
+`--max-bytes` to cap individual digital-object downloads.
 
 ## Rate Limit Awareness
 
@@ -148,6 +160,15 @@ The implementation targets the MCP `2025-11-25` specification and the stable
 fetch, image listing/download, hierarchy, related records, source-packet drafts,
 and negative-search drafts. MCP outputs scrub key-source metadata so API key
 locations are not returned to clients.
+
+MCP write tools are disabled by default. To allow `nara_download_digital_objects`
+or `nara_make_source_packet`, set `NARA_MCP_WRITE_ROOT` to a local directory.
+Those tools reject paths outside that root and return relative paths to MCP
+clients.
+
+Source packet IDs are validated as `S###`, `R###`, `C###`, or `N###` with an
+optional alphanumeric, underscore, or dash suffix. Existing packet files are not
+overwritten.
 
 ## Development
 

@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from .config import DEFAULT_SECRET_FILE
-from .models import SearchRequest, to_plain
+from .models import DownloadManifest, DownloadResult, SearchRequest, to_plain
 from .service import MissingApiKeyError, NaraCatalogService
 
 
@@ -84,11 +84,11 @@ def request_from_args(args: argparse.Namespace, *, limit_override: int | None = 
 
 
 def service_from_args(args: argparse.Namespace) -> NaraCatalogService:
-    return NaraCatalogService.from_environment(secret_file=args.secret_file, timeout=getattr(args, "timeout", 60))
+    return NaraCatalogService.from_environment(secret_file=args.secret_file, project_dir=Path.cwd(), timeout=getattr(args, "timeout", 60))
 
 
 def cmd_check_key(args: argparse.Namespace) -> int:
-    result = NaraCatalogService.check_key(live=args.live, secret_file=args.secret_file, require=args.require)
+    result = NaraCatalogService.check_key(live=args.live, secret_file=args.secret_file, require=args.require, project_dir=Path.cwd())
     emit_json(result, args.save)
     return 0 if result.key_present or not args.require else 2
 
@@ -112,17 +112,33 @@ def cmd_search(args: argparse.Namespace) -> int:
     if args.count:
         response = service.count_records(request, timeout=args.timeout)
         if args.json or args.save:
-            emit_json(response, args.save)
+            if args.negative_search_draft:
+                draft = service.make_negative_search_record(request, threshold=args.negative_search_threshold, timeout=args.timeout)
+                emit_json({"count": response, "negative_search": draft}, args.save)
+            else:
+                emit_json(response, args.save)
         else:
             print(f"Query: {request.query}")
             print(f"Filters: {json.dumps(response.request.params, ensure_ascii=False)}")
             print(f"Total: {response.total}")
             print(f"Fetched epoch: {response.request.fetched_at_epoch}")
+            if args.negative_search_draft:
+                draft = service.make_negative_search_record(request, threshold=args.negative_search_threshold, timeout=args.timeout)
+                print()
+                print(draft.markdown)
         return 0
 
     response = service.search_records(request, timeout=args.timeout)
     download_manifests = []
     if args.download_dir:
+        total_objects = sum(record.digital_object_count for record in response.records[: args.download_record_limit])
+        if not args.range and total_objects > args.download_object_limit and not args.yes:
+            print(
+                f"Refusing to download up to {total_objects} digital objects without --yes; "
+                "use --range, --download-object-limit, or lower --limit.",
+                file=sys.stderr,
+            )
+            return 2
         if response.returned > args.download_record_limit and not args.yes:
             print(
                 f"Refusing to download from {response.returned} records without --yes; "
@@ -134,7 +150,14 @@ def cmd_search(args: argparse.Namespace) -> int:
             if record.na_id:
                 dest = Path(args.download_dir).expanduser() / str(record.na_id)
                 download_manifests.append(
-                    service.download_digital_objects(record.na_id, dest, selection=args.range, force=args.force, timeout=args.timeout)
+                    service.download_digital_objects(
+                        record.na_id,
+                        dest,
+                        selection=args.range,
+                        force=args.force,
+                        timeout=args.timeout,
+                        max_bytes=args.max_bytes,
+                    )
                 )
     if args.json or args.full:
         payload = response.raw if args.full else response
@@ -160,7 +183,11 @@ def cmd_record(args: argparse.Namespace) -> int:
 
 def cmd_images(args: argparse.Namespace) -> int:
     service = service_from_args(args)
-    objects = service.list_digital_objects(args.naid, timeout=args.timeout)
+    objects = service.list_digital_objects(
+        args.naid,
+        local_dir=Path(args.status_dir).expanduser() if args.status_dir else None,
+        timeout=args.timeout,
+    )
     if args.download_dir:
         manifest = service.download_digital_objects(
             args.naid,
@@ -168,6 +195,7 @@ def cmd_images(args: argparse.Namespace) -> int:
             selection=args.range,
             force=args.force,
             timeout=args.timeout,
+            max_bytes=args.max_bytes,
         )
         emit_json(manifest, args.save) if args.json or args.save else _print_manifest(manifest)
     elif args.json or args.save:
@@ -213,7 +241,13 @@ def cmd_related(args: argparse.Namespace) -> int:
 
 def cmd_source_packet(args: argparse.Namespace) -> int:
     service = service_from_args(args)
-    packet = service.make_source_packet(args.naid, args.source_id, Path(args.archive_root).expanduser(), timeout=args.timeout)
+    packet = service.make_source_packet(
+        args.naid,
+        args.source_id,
+        Path(args.archive_root).expanduser(),
+        download_manifest=_load_download_manifest(args.download_manifest) if args.download_manifest else None,
+        timeout=args.timeout,
+    )
     emit_json(packet, args.save) if args.json or args.save else print(f"source_packet={packet.packet_path}")
     return 0
 
@@ -273,10 +307,23 @@ def _print_download_totals(manifests) -> None:
     print(f"Downloads: records={records} downloaded={downloaded} skipped={skipped} failed={failed}")
 
 
+def _load_download_manifest(path: str) -> DownloadManifest:
+    data = json.loads(Path(path).expanduser().read_text())
+    results = [DownloadResult(**item) for item in data.get("results", [])]
+    return DownloadManifest(na_id=str(data["na_id"]), destination=str(data["destination"]), results=results)
+
+
+def positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be 1 or greater")
+    return parsed
+
+
 def add_search_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--query", required=True, help='Query string; supports API boolean syntax such as AND/OR and exact phrases.')
-    parser.add_argument("--limit", type=int, default=10)
-    parser.add_argument("--page", type=int, default=1)
+    parser.add_argument("--limit", type=positive_int, default=10)
+    parser.add_argument("--page", type=positive_int, default=1)
     parser.add_argument("--online", action="store_true", help="Set NARA API availableOnline=true.")
     parser.add_argument("--abbreviated", action="store_true")
     parser.add_argument("--include-extracted-text", action="store_true")
@@ -309,16 +356,20 @@ def build_parser() -> argparse.ArgumentParser:
     search = sub.add_parser("search", help="Search NARA Catalog records. Compact text is the default output.")
     add_search_args(search)
     search.add_argument("--count", action="store_true", help="Only fetch enough data to report the total hit count.")
+    search.add_argument("--negative-search-draft", action="store_true", help="With --count, also emit a negative-search draft.")
+    search.add_argument("--negative-search-threshold", type=int, default=0)
     search.add_argument("--compact", action="store_true", help="Explicitly request compact text output; this is already the default.")
     search.add_argument("--json", action="store_true", help="Print normalized machine-readable JSON.")
     search.add_argument("--full", action="store_true", help="Print/save raw NARA API JSON.")
     search.add_argument("--save", help="Save JSON output to a file.")
     search.add_argument("--download-dir", help="Download digital objects from returned records into this directory.")
-    search.add_argument("--download-record-limit", type=int, default=5)
+    search.add_argument("--download-record-limit", type=positive_int, default=5)
+    search.add_argument("--download-object-limit", type=positive_int, default=25)
     search.add_argument("--range", help="Digital-object indexes or ranges to download, e.g. 1,3-5. Default all.")
     search.add_argument("--force", action="store_true", help="Allow downloads to overwrite existing files.")
     search.add_argument("--yes", action="store_true", help="Confirm potentially large search-result downloads.")
-    search.add_argument("--timeout", type=int, default=60)
+    search.add_argument("--max-bytes", type=positive_int, help="Maximum bytes per digital object download.")
+    search.add_argument("--timeout", type=positive_int, default=60)
     search.set_defaults(func=cmd_search)
 
     record = sub.add_parser("record", help="Fetch a single record by NAID using naId_is.")
@@ -327,7 +378,7 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--json", action="store_true", help="Accepted for consistency; record output is JSON by default.")
     record.add_argument("--full", action="store_true", help="Print/save raw NARA API JSON.")
     record.add_argument("--save")
-    record.add_argument("--timeout", type=int, default=60)
+    record.add_argument("--timeout", type=positive_int, default=60)
     record.set_defaults(func=cmd_record)
 
     images = sub.add_parser("images", help="List or download digital objects for a NAID.")
@@ -335,9 +386,11 @@ def build_parser() -> argparse.ArgumentParser:
     images.add_argument("--json", action="store_true")
     images.add_argument("--save")
     images.add_argument("--download-dir")
+    images.add_argument("--status-dir", help="When listing, mark objects downloaded if their expected files exist in this directory.")
     images.add_argument("--range", help="Digital-object indexes or ranges, e.g. 1,3-5. Default all.")
     images.add_argument("--force", action="store_true")
-    images.add_argument("--timeout", type=int, default=60)
+    images.add_argument("--max-bytes", type=positive_int, help="Maximum bytes per digital object download.")
+    images.add_argument("--timeout", type=positive_int, default=60)
     images.set_defaults(func=cmd_images)
 
     browse = sub.add_parser("browse", help="Show hierarchy around a NAID.")
@@ -345,26 +398,27 @@ def build_parser() -> argparse.ArgumentParser:
     browse.add_argument("--json", action="store_true")
     browse.add_argument("--save")
     browse.add_argument("--siblings", action="store_true", help="Also list records under the same parent when a parent NAID is available.")
-    browse.add_argument("--limit", type=int, default=10, help="Sibling/search-within-parent result limit.")
-    browse.add_argument("--timeout", type=int, default=60)
+    browse.add_argument("--limit", type=positive_int, default=10, help="Sibling/search-within-parent result limit.")
+    browse.add_argument("--timeout", type=positive_int, default=60)
     browse.set_defaults(func=cmd_browse)
 
     related = sub.add_parser("related", help="Find related records around a NAID.")
     related.add_argument("--naid", required=True)
-    related.add_argument("--mode", default="same-parent", choices=["same-parent", "same-series", "same-ancestor", "same-record-group", "similar-title"])
-    related.add_argument("--limit", type=int, default=10)
+    related.add_argument("--mode", default="same-parent", choices=["same-parent", "same-series", "same-ancestor", "same-record-group", "similar-title", "references"])
+    related.add_argument("--limit", type=positive_int, default=10)
     related.add_argument("--json", action="store_true")
     related.add_argument("--save")
-    related.add_argument("--timeout", type=int, default=60)
+    related.add_argument("--timeout", type=positive_int, default=60)
     related.set_defaults(func=cmd_related)
 
     packet = sub.add_parser("source-packet", help="Create a repository-style NARA source-packet draft.")
     packet.add_argument("--naid", required=True)
     packet.add_argument("--source-id", required=True)
     packet.add_argument("--archive-root", required=True)
+    packet.add_argument("--download-manifest", help="Include downloaded object paths/hashes from a nara-NAID-download-manifest.json file.")
     packet.add_argument("--json", action="store_true")
     packet.add_argument("--save")
-    packet.add_argument("--timeout", type=int, default=60)
+    packet.add_argument("--timeout", type=positive_int, default=60)
     packet.set_defaults(func=cmd_source_packet)
 
     neg = sub.add_parser("negative-search", help="Create a negative-search draft from a NARA query.")
@@ -372,7 +426,7 @@ def build_parser() -> argparse.ArgumentParser:
     neg.add_argument("--threshold", type=int, default=0)
     neg.add_argument("--json", action="store_true")
     neg.add_argument("--save")
-    neg.add_argument("--timeout", type=int, default=60)
+    neg.add_argument("--timeout", type=positive_int, default=60)
     neg.set_defaults(func=cmd_negative_search)
 
     summarize = sub.add_parser("summarize-file", help="Summarize JSON saved by this helper.")

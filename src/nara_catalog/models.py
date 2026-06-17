@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any
 
+MAX_SEARCH_LIMIT = 100
+
 
 def to_plain(value: Any) -> Any:
     if is_dataclass(value):
@@ -48,6 +50,14 @@ class SearchRequest:
     start_date: str | None = None
     end_date: str | None = None
     source_includes: str | None = None
+
+    def __post_init__(self) -> None:
+        if not str(self.query).strip():
+            raise ValueError("query must not be empty")
+        if self.limit < 1 or self.limit > MAX_SEARCH_LIMIT:
+            raise ValueError(f"limit must be between 1 and {MAX_SEARCH_LIMIT}")
+        if self.page < 1:
+            raise ValueError("page must be 1 or greater")
 
 
 @dataclass(slots=True)

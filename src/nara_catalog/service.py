@@ -30,6 +30,8 @@ class MissingApiKeyError(RuntimeError):
             f"{key_source}. Create a .env in the project root or request a key from Catalog_API@nara.gov."
         )
 
+RELATED_MODES = {"same-parent", "same-series", "same-ancestor", "same-record-group", "similar-title", "references"}
+
 
 def search_params(request: SearchRequest) -> dict[str, Any]:
     params: dict[str, Any] = {"q": request.query, "limit": request.limit, "page": request.page}
@@ -90,8 +92,14 @@ class NaraCatalogService:
         return cls(NaraCatalogClient(key, timeout=timeout), key_source=source), source
 
     @staticmethod
-    def check_key(*, live: bool = False, secret_file: str | None = None, require: bool = False) -> KeyStatus:
-        service, source = NaraCatalogService.optional_from_environment(secret_file=secret_file)
+    def check_key(
+        *,
+        live: bool = False,
+        secret_file: str | None = None,
+        require: bool = False,
+        project_dir: Path | None = None,
+    ) -> KeyStatus:
+        service, source = NaraCatalogService.optional_from_environment(secret_file=secret_file, project_dir=project_dir)
         status = KeyStatus(key_present=bool(service), key_source=source if service else None, api_base=BASE_URL)
         if live and service:
             try:
@@ -145,11 +153,16 @@ class NaraCatalogService:
     def summarize_record(self, record: dict[str, Any]) -> CompactRecord:
         return compact.compact_record(record)
 
-    def list_digital_objects(self, na_id: str, *, timeout: int | None = None) -> list:
+    def list_digital_objects(self, na_id: str, *, local_dir: Path | None = None, timeout: int | None = None) -> list:
         record = self.get_record(na_id, include_extracted_text=True, timeout=timeout)
         if not record.record:
             return []
-        return compact.summarize_digital_objects(parse.digital_objects(record.record), limit=None)
+        objects = compact.summarize_digital_objects(parse.digital_objects(record.record), limit=None)
+        if local_dir:
+            for obj in objects:
+                path = local_dir / downloads.destination_name(na_id, obj)
+                obj.local_path = str(path)
+        return _mark_local_download_status(objects)
 
     def download_digital_objects(
         self,
@@ -159,6 +172,7 @@ class NaraCatalogService:
         selection: str | None = None,
         force: bool = False,
         timeout: int = 60,
+        max_bytes: int | None = None,
     ) -> DownloadManifest:
         objects = self.list_digital_objects(na_id, timeout=timeout)
         return downloads.download_objects(
@@ -168,6 +182,7 @@ class NaraCatalogService:
             selection=selection,
             force=force,
             timeout=timeout,
+            max_bytes=max_bytes,
         )
 
     def browse_hierarchy(
@@ -195,8 +210,10 @@ class NaraCatalogService:
         limit: int = 10,
         timeout: int | None = None,
     ) -> RelatedRecordsResponse:
+        if mode not in RELATED_MODES:
+            raise ValueError(f"mode must be one of: {', '.join(sorted(RELATED_MODES))}")
         record = self.get_record(na_id, timeout=timeout)
-        hierarchy = self.browse_hierarchy(na_id, timeout=timeout)
+        hierarchy = _hierarchy_from_record(record)
         basis: dict[str, Any] = {}
         search: SearchResponse | None = None
         if mode == "same-parent" and hierarchy.parent and hierarchy.parent.get("naId"):
@@ -208,15 +225,26 @@ class NaraCatalogService:
         elif mode == "same-record-group" and record.compact and record.compact.record_group_number:
             basis = {"record_group_number": record.compact.record_group_number}
             search = self.search_records(SearchRequest(query="*", record_group_number=record.compact.record_group_number, limit=limit), timeout=timeout)
-        elif record.compact and record.compact.title:
+        elif mode == "references":
+            basis = {"query": na_id}
+            search = self.search_records(SearchRequest(query=na_id, limit=limit), timeout=timeout)
+        elif mode == "similar-title" and record.compact and record.compact.title:
             terms = " ".join(str(record.compact.title).split()[:6])
             basis = {"query": terms}
             search = self.search_records(SearchRequest(query=terms, limit=limit), timeout=timeout)
         return RelatedRecordsResponse(na_id=na_id, mode=mode, search=search, basis=basis)
 
-    def make_source_packet(self, na_id: str, source_id: str, archive_root: Path, *, timeout: int | None = None) -> SourcePacket:
+    def make_source_packet(
+        self,
+        na_id: str,
+        source_id: str,
+        archive_root: Path,
+        *,
+        download_manifest: DownloadManifest | None = None,
+        timeout: int | None = None,
+    ) -> SourcePacket:
         record = self.get_record(na_id, include_extracted_text=True, timeout=timeout)
-        return preservation.make_source_packet(record, source_id, archive_root)
+        return preservation.make_source_packet(record, source_id, archive_root, download_manifest=download_manifest)
 
     def make_negative_search_record(
         self,
@@ -230,3 +258,17 @@ class NaraCatalogService:
         if result.total is not None and result.total > threshold:
             confidence = "not-yet-verified"
         return preservation.make_negative_search_draft(request, result.total, confidence=confidence)
+
+
+def _hierarchy_from_record(record: RecordResponse) -> HierarchyResult:
+    ancestors = record.compact.ancestors if record.compact else []
+    parent = ancestors[-1] if ancestors else None
+    likely_series = next((a for a in reversed(ancestors) if "series" in str(a.get("level") or "").lower()), None)
+    return HierarchyResult(na_id=record.na_id, ancestors=ancestors, parent=parent, likely_series=likely_series)
+
+
+def _mark_local_download_status(objects: list) -> list:
+    for obj in objects:
+        if obj.local_path and Path(obj.local_path).exists():
+            obj.downloaded = True
+    return objects

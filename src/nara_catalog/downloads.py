@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 from urllib.parse import urlparse
@@ -35,9 +36,16 @@ def select_objects(objects: list[DigitalObject], selection: str | None = None) -
             continue
         if "-" in item:
             start, end = item.split("-", 1)
-            wanted.update(range(int(start), int(end) + 1))
+            start_index = int(start)
+            end_index = int(end)
+            if start_index < 1 or end_index < start_index:
+                raise ValueError("selection ranges must be positive and increasing")
+            wanted.update(range(start_index, end_index + 1))
         else:
-            wanted.add(int(item))
+            index = int(item)
+            if index < 1:
+                raise ValueError("selection indexes must be positive")
+            wanted.add(index)
     return [obj for obj in objects if obj.index in wanted]
 
 
@@ -56,6 +64,7 @@ def download_objects(
     selection: str | None = None,
     force: bool = False,
     timeout: int = 60,
+    max_bytes: int | None = None,
 ) -> DownloadManifest:
     destination.mkdir(parents=True, exist_ok=True)
     selected = select_objects(objects, selection)
@@ -68,19 +77,32 @@ def download_objects(
         if path.exists() and not force:
             results.append(DownloadResult(obj.index, obj.object_url, str(path), sha256_file(path), "skipped_exists"))
             continue
+        temp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
         try:
-            response = requests.get(obj.object_url, timeout=timeout)
+            response = requests.get(obj.object_url, timeout=timeout, stream=True)
             response.raise_for_status()
-            path.write_bytes(response.content)
+            digest = hashlib.sha256()
+            bytes_written = 0
+            with temp_path.open("wb") as handle:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if not chunk:
+                        continue
+                    bytes_written += len(chunk)
+                    if max_bytes is not None and bytes_written > max_bytes:
+                        raise ValueError(f"download exceeded max_bytes={max_bytes}")
+                    digest.update(chunk)
+                    handle.write(chunk)
+            temp_path.replace(path)
             results.append(DownloadResult(
                 index=obj.index,
                 url=obj.object_url,
                 local_path=str(path),
-                sha256=sha256_file(path),
+                sha256=digest.hexdigest(),
                 status="downloaded",
-                bytes_written=len(response.content),
+                bytes_written=bytes_written,
             ))
         except Exception as exc:
+            temp_path.unlink(missing_ok=True)
             results.append(DownloadResult(obj.index, obj.object_url, str(path), None, "failed", error=str(exc)[:500]))
     manifest = DownloadManifest(na_id=na_id, destination=str(destination), results=results)
     manifest_path = destination / f"nara-{na_id}-download-manifest.json"
