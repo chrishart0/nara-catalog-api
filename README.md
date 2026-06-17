@@ -26,6 +26,21 @@ Protocol, MCP, Python CLI.
 - Source-packet and negative-search helpers for auditable research workflows.
 - Offline-first tests so behavior is not coupled to live NARA responses.
 
+## What Can You Use NARA For?
+
+NARA Catalog records can support many historical and genealogical research
+workflows, including:
+
+- finding historical passport applications and travel records;
+- locating military service, pension, draft, and veterans' records;
+- researching immigration, naturalization, and border-crossing records;
+- finding federal court, land, census, and agency records;
+- tracing record groups, series, file units, and archival hierarchy around a
+  known NAID;
+- listing and downloading available digital object images for source review;
+- preserving catalog metadata, source URLs, hashes, and negative searches for
+  later citation.
+
 ## Install
 
 ```bash
