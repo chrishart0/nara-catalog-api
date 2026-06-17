@@ -1,18 +1,47 @@
-# NARA Catalog API Helper
+# NARA Catalog Agent CLI
 
-Agent-first, read-only helper for the National Archives Catalog API v2. The CLI,
-Python API, and MCP server share the same package code under `src/nara_catalog/`.
+Agent-first command-line tool for the National Archives Catalog API v2, with a
+shared Python API and optional MCP server.
 
-## Setup
+The CLI is designed for research agents and humans who need scan-friendly
+search results, structured JSON, direct digital-object workflows, and
+preservation-safe source packets without hand-inspecting nested API responses.
+
+This project is read-only against NARA and is not affiliated with the National
+Archives and Records Administration.
+
+## Why Agent-First?
+
+- Compact terminal output by default; JSON when agents need structured data.
+- One shared service layer for CLI, Python API, and MCP tools.
+- Explicit safeguards for downloads, filesystem writes, and API-key handling.
+- Source-packet and negative-search helpers for auditable research workflows.
+- Offline-first tests so behavior is not coupled to live NARA responses.
+
+## Install
+
+```bash
+git clone <repo-url>
+cd nara-catalog-api
+python -m pip install -e '.[test]'
+```
+
+For the optional MCP server:
+
+```bash
+python -m pip install -e '.[mcp]'
+```
+
+## Configure
 
 Get a NARA Catalog API key by emailing `Catalog_API@nara.gov`, then use one of:
 
 ```bash
 export NARA_API_KEY=your-key
-# or, from the repo root you run commands in:
+# or, from the directory where you run commands:
 printf 'NARA_API_KEY=your-key\n' > .env
 # or:
-python nara_api.py --secret-file /path/to/nara.env check-key --live
+nara-api --secret-file /path/to/nara.env check-key --live
 ```
 
 Credential lookup order is environment, `--secret-file`, current working
@@ -22,30 +51,33 @@ key.
 ## Quick Start
 
 ```bash
-# Readable search results
-python nara_api.py search --query '"Arthur Davis Variell"' --online
+# Readable compact search results
+nara-api search --query '"SEARCH TERMS"' --online
+
+# Normalized JSON for agents
+nara-api search --query '"SEARCH TERMS"' --online --json
 
 # Count-only scoping, optionally with a negative-search draft
-python nara_api.py search --query 'Variell' --online --count
-python nara_api.py search --query '"Arthur D. Variell" passport' --online --count --negative-search-draft
+nara-api search --query '"SEARCH TERMS"' --online --count
+nara-api search --query '"SEARCH TERMS"' --online --count --negative-search-draft
 
-# Fetch and preserve a record
-python nara_api.py record --naid 235845496 --save /tmp/nara-235845496.json
-python nara_api.py source-packet --naid 235845496 --source-id S061 --archive-root ../..
+# Fetch a record and create a preservation draft
+nara-api record --naid NAID --save /tmp/nara-NAID.json
+nara-api source-packet --naid NAID --source-id S001 --archive-root /path/to/archive-root
 
 # List or download digital objects
-python nara_api.py images --naid 235845496
-python nara_api.py images --naid 235845496 --download-dir /tmp/nara-235845496 --range 1-5
+nara-api images --naid NAID
+nara-api images --naid NAID --download-dir /tmp/nara-NAID --range 1-5
 
-# Browse related context
-python nara_api.py browse --naid 235845496 --siblings
-python nara_api.py related --naid 235845496 --mode same-series
+# Browse hierarchy and related records
+nara-api browse --naid NAID --siblings
+nara-api related --naid NAID --mode same-series
 ```
 
 Use `--json` for normalized JSON and `--full` for raw NARA API JSON. Run
-`python nara_api.py COMMAND --help` for command-specific options.
+`nara-api COMMAND --help` for command-specific options.
 
-## Workflow Notes
+## Output And Safety Notes
 
 - `search` defaults to compact terminal output.
 - `--start-date` and `--end-date` map to NARA `startDate` and `endDate`.
@@ -70,7 +102,7 @@ from nara_catalog.service import NaraCatalogService
 
 service = NaraCatalogService.from_environment(project_dir=Path.cwd())
 result = service.search_records(SearchRequest(
-    query='"Arthur Davis Variell" passport',
+    query='"SEARCH TERMS"',
     online=True,
     limit=10,
 ))
@@ -79,7 +111,6 @@ result = service.search_records(SearchRequest(
 ## MCP Server
 
 ```bash
-pip install -e '.[mcp]'
 nara-mcp
 ```
 
@@ -91,10 +122,14 @@ responses scrub local filesystem details.
 ## Development
 
 ```bash
-pip install -e '.[test]'
+python -m pip install -e '.[test]'
 pytest
 RUN_NARA_INTEGRATION=1 pytest tests/integration
 ```
 
 Unit tests are offline. Live NARA tests are opt-in and assert broad API shape
 only.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

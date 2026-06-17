@@ -10,6 +10,8 @@ from .config import DEFAULT_SECRET_FILE
 from .models import DownloadManifest, DownloadResult, SearchRequest, to_plain
 from .service import MissingApiKeyError, NaraCatalogService
 
+DEFAULT_SECRET_FILE_DISPLAY = "~/.hermes/secrets/nara.env"
+
 
 class HelpFormatter(argparse.ArgumentDefaultsHelpFormatter):
     def _get_help_string(self, action: argparse.Action) -> str:
@@ -352,10 +354,10 @@ def add_search_args(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     formatter = HelpFormatter
     parser = argparse.ArgumentParser(
-        description="Read-only National Archives Catalog API v2 helper.",
+        description="Agent-first, read-only CLI for the National Archives Catalog API v2.",
         formatter_class=formatter,
     )
-    parser.add_argument("--secret-file", help=f"Secret env file. If omitted, checks env, cwd .env, then {DEFAULT_SECRET_FILE}.")
+    parser.add_argument("--secret-file", help=f"Secret env file. If omitted, checks env, cwd .env, then {DEFAULT_SECRET_FILE_DISPLAY}.")
     sub = parser.add_subparsers(dest="command", required=True)
 
     check = sub.add_parser("check-key", help="Check whether a NARA API key is configured; never prints it.", formatter_class=formatter)
