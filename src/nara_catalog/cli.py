@@ -11,6 +11,18 @@ from .models import DownloadManifest, DownloadResult, SearchRequest, to_plain
 from .service import MissingApiKeyError, NaraCatalogService
 
 
+class HelpFormatter(argparse.ArgumentDefaultsHelpFormatter):
+    def _get_help_string(self, action: argparse.Action) -> str:
+        help_text = action.help or ""
+        if "%(default)" in help_text:
+            return help_text
+        if action.default in (None, False, argparse.SUPPRESS):
+            return help_text
+        if action.option_strings:
+            return f"{help_text} (default: %(default)s)"
+        return help_text
+
+
 def emit_json(data: object, save: str | None = None) -> None:
     text = json.dumps(to_plain(data), indent=2, ensure_ascii=False)
     if save:
@@ -322,115 +334,119 @@ def positive_int(value: str) -> int:
 
 def add_search_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--query", required=True, help='Query string; supports API boolean syntax such as AND/OR and exact phrases.')
-    parser.add_argument("--limit", type=positive_int, default=10)
-    parser.add_argument("--page", type=positive_int, default=1)
+    parser.add_argument("--limit", type=positive_int, default=10, help="Results per page; package validation caps this at 100.")
+    parser.add_argument("--page", type=positive_int, default=1, help="One-based result page number.")
     parser.add_argument("--online", action="store_true", help="Set NARA API availableOnline=true.")
-    parser.add_argument("--abbreviated", action="store_true")
-    parser.add_argument("--include-extracted-text", action="store_true")
-    parser.add_argument("--type-of-materials")
-    parser.add_argument("--object-type")
-    parser.add_argument("--record-group-number")
-    parser.add_argument("--reference-units")
-    parser.add_argument("--ancestor-naid")
+    parser.add_argument("--abbreviated", action="store_true", help="Ask NARA for abbreviated records where supported.")
+    parser.add_argument("--include-extracted-text", action="store_true", help="Request OCR/extracted text where supported.")
+    parser.add_argument("--type-of-materials", help='Filter by NARA type of materials, e.g. "Textual Records".')
+    parser.add_argument("--object-type", help='Filter digital objects by object type, e.g. "Image".')
+    parser.add_argument("--record-group-number", help='Filter by record group number, e.g. "59".')
+    parser.add_argument("--reference-units", help="Filter by NARA reference unit.")
+    parser.add_argument("--ancestor-naid", help="Search within an ancestor/series/parent NAID.")
     parser.add_argument("--start-date", help="Maps to NARA API startDate. Date-range behavior depends on catalog metadata.")
     parser.add_argument("--end-date", help="Maps to NARA API endDate. Date-range behavior depends on catalog metadata.")
-    parser.add_argument("--source-includes")
+    parser.add_argument("--source-includes", help="NARA sourceIncludes parameter for limiting returned fields.")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Read-only National Archives Catalog API v2 helper.")
-    parser.add_argument("--secret-file", help=f"Secret env file; default {DEFAULT_SECRET_FILE}")
+    formatter = HelpFormatter
+    parser = argparse.ArgumentParser(
+        description="Read-only National Archives Catalog API v2 helper.",
+        formatter_class=formatter,
+    )
+    parser.add_argument("--secret-file", help=f"Secret env file. If omitted, checks env, cwd .env, then {DEFAULT_SECRET_FILE}.")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    check = sub.add_parser("check-key", help="Check whether a NARA API key is configured; never prints it.")
+    check = sub.add_parser("check-key", help="Check whether a NARA API key is configured; never prints it.", formatter_class=formatter)
     check.add_argument("--live", action="store_true", help="If a key is present, run a one-result live API check.")
     check.add_argument("--require", action="store_true", help="Exit nonzero if key is missing.")
-    check.add_argument("--save")
+    check.add_argument("--save", help="Save JSON status output to this path.")
     check.set_defaults(func=cmd_check_key)
 
-    mk = sub.add_parser("make-secret", help="Create a NARA API key placeholder file with 0600 permissions.")
-    mk.add_argument("--path", default=str(DEFAULT_SECRET_FILE))
-    mk.add_argument("--force", action="store_true")
+    mk = sub.add_parser("make-secret", help="Create a NARA API key placeholder file with 0600 permissions.", formatter_class=formatter)
+    mk.add_argument("--path", default=str(DEFAULT_SECRET_FILE), help="Secret file path to create.")
+    mk.add_argument("--force", action="store_true", help="Overwrite an existing placeholder file.")
     mk.set_defaults(func=cmd_make_secret)
 
-    search = sub.add_parser("search", help="Search NARA Catalog records. Compact text is the default output.")
+    search = sub.add_parser("search", help="Search NARA Catalog records. Compact text is the default output.", formatter_class=formatter)
     add_search_args(search)
     search.add_argument("--count", action="store_true", help="Only fetch enough data to report the total hit count.")
     search.add_argument("--negative-search-draft", action="store_true", help="With --count, also emit a negative-search draft.")
-    search.add_argument("--negative-search-threshold", type=int, default=0)
+    search.add_argument("--negative-search-threshold", type=int, default=0, help="Mark count results above this threshold as not-yet-verified in generated drafts.")
     search.add_argument("--compact", action="store_true", help="Explicitly request compact text output; this is already the default.")
     search.add_argument("--json", action="store_true", help="Print normalized machine-readable JSON.")
     search.add_argument("--full", action="store_true", help="Print/save raw NARA API JSON.")
     search.add_argument("--save", help="Save JSON output to a file.")
     search.add_argument("--download-dir", help="Download digital objects from returned records into this directory.")
-    search.add_argument("--download-record-limit", type=positive_int, default=5)
-    search.add_argument("--download-object-limit", type=positive_int, default=25)
+    search.add_argument("--download-record-limit", type=positive_int, default=5, help="Maximum returned records to download from.")
+    search.add_argument("--download-object-limit", type=positive_int, default=25, help="Maximum estimated objects to download without --yes or --range.")
     search.add_argument("--range", help="Digital-object indexes or ranges to download, e.g. 1,3-5. Default all.")
     search.add_argument("--force", action="store_true", help="Allow downloads to overwrite existing files.")
     search.add_argument("--yes", action="store_true", help="Confirm potentially large search-result downloads.")
     search.add_argument("--max-bytes", type=positive_int, help="Maximum bytes per digital object download.")
-    search.add_argument("--timeout", type=positive_int, default=60)
+    search.add_argument("--timeout", type=positive_int, default=60, help="HTTP timeout in seconds.")
     search.set_defaults(func=cmd_search)
 
-    record = sub.add_parser("record", help="Fetch a single record by NAID using naId_is.")
-    record.add_argument("--naid", required=True)
-    record.add_argument("--include-extracted-text", action="store_true")
+    record = sub.add_parser("record", help="Fetch a single record by NAID using naId_is.", formatter_class=formatter)
+    record.add_argument("--naid", required=True, help="NARA National Archives Identifier.")
+    record.add_argument("--include-extracted-text", action="store_true", help="Request OCR/extracted text where supported.")
     record.add_argument("--json", action="store_true", help="Accepted for consistency; record output is JSON by default.")
     record.add_argument("--full", action="store_true", help="Print/save raw NARA API JSON.")
-    record.add_argument("--save")
-    record.add_argument("--timeout", type=positive_int, default=60)
+    record.add_argument("--save", help="Save JSON output to this path.")
+    record.add_argument("--timeout", type=positive_int, default=60, help="HTTP timeout in seconds.")
     record.set_defaults(func=cmd_record)
 
-    images = sub.add_parser("images", help="List or download digital objects for a NAID.")
-    images.add_argument("--naid", required=True)
-    images.add_argument("--json", action="store_true")
-    images.add_argument("--save")
-    images.add_argument("--download-dir")
+    images = sub.add_parser("images", help="List or download digital objects for a NAID.", formatter_class=formatter)
+    images.add_argument("--naid", required=True, help="NARA National Archives Identifier.")
+    images.add_argument("--json", action="store_true", help="Print normalized machine-readable JSON.")
+    images.add_argument("--save", help="Save JSON output or download manifest to this path.")
+    images.add_argument("--download-dir", help="Download digital objects into this directory.")
     images.add_argument("--status-dir", help="When listing, mark objects downloaded if their expected files exist in this directory.")
     images.add_argument("--range", help="Digital-object indexes or ranges, e.g. 1,3-5. Default all.")
-    images.add_argument("--force", action="store_true")
+    images.add_argument("--force", action="store_true", help="Allow downloads to overwrite existing files.")
     images.add_argument("--max-bytes", type=positive_int, help="Maximum bytes per digital object download.")
-    images.add_argument("--timeout", type=positive_int, default=60)
+    images.add_argument("--timeout", type=positive_int, default=60, help="HTTP timeout in seconds.")
     images.set_defaults(func=cmd_images)
 
-    browse = sub.add_parser("browse", help="Show hierarchy around a NAID.")
-    browse.add_argument("--naid", required=True)
-    browse.add_argument("--json", action="store_true")
-    browse.add_argument("--save")
+    browse = sub.add_parser("browse", help="Show hierarchy around a NAID.", formatter_class=formatter)
+    browse.add_argument("--naid", required=True, help="NARA National Archives Identifier.")
+    browse.add_argument("--json", action="store_true", help="Print normalized machine-readable JSON.")
+    browse.add_argument("--save", help="Save JSON output to this path.")
     browse.add_argument("--siblings", action="store_true", help="Also list records under the same parent when a parent NAID is available.")
     browse.add_argument("--limit", type=positive_int, default=10, help="Sibling/search-within-parent result limit.")
-    browse.add_argument("--timeout", type=positive_int, default=60)
+    browse.add_argument("--timeout", type=positive_int, default=60, help="HTTP timeout in seconds.")
     browse.set_defaults(func=cmd_browse)
 
-    related = sub.add_parser("related", help="Find related records around a NAID.")
-    related.add_argument("--naid", required=True)
-    related.add_argument("--mode", default="same-parent", choices=["same-parent", "same-series", "same-ancestor", "same-record-group", "similar-title", "references"])
-    related.add_argument("--limit", type=positive_int, default=10)
-    related.add_argument("--json", action="store_true")
-    related.add_argument("--save")
-    related.add_argument("--timeout", type=positive_int, default=60)
+    related = sub.add_parser("related", help="Find related records around a NAID.", formatter_class=formatter)
+    related.add_argument("--naid", required=True, help="NARA National Archives Identifier.")
+    related.add_argument("--mode", default="same-parent", choices=["same-parent", "same-series", "same-ancestor", "same-record-group", "similar-title", "references"], help="Relationship strategy.")
+    related.add_argument("--limit", type=positive_int, default=10, help="Maximum related search results to return.")
+    related.add_argument("--json", action="store_true", help="Print normalized machine-readable JSON.")
+    related.add_argument("--save", help="Save JSON output to this path.")
+    related.add_argument("--timeout", type=positive_int, default=60, help="HTTP timeout in seconds.")
     related.set_defaults(func=cmd_related)
 
-    packet = sub.add_parser("source-packet", help="Create a repository-style NARA source-packet draft.")
-    packet.add_argument("--naid", required=True)
-    packet.add_argument("--source-id", required=True)
-    packet.add_argument("--archive-root", required=True)
+    packet = sub.add_parser("source-packet", help="Create a repository-style NARA source-packet draft.", formatter_class=formatter)
+    packet.add_argument("--naid", required=True, help="NARA National Archives Identifier.")
+    packet.add_argument("--source-id", required=True, help="Project source ID: S###, R###, C###, or N###, with optional alphanumeric/_/- suffix.")
+    packet.add_argument("--archive-root", required=True, help="Repository/archive root. Packet files are written under archive/nara/SOURCE_ID.")
     packet.add_argument("--download-manifest", help="Include downloaded object paths/hashes from a nara-NAID-download-manifest.json file.")
-    packet.add_argument("--json", action="store_true")
-    packet.add_argument("--save")
-    packet.add_argument("--timeout", type=positive_int, default=60)
+    packet.add_argument("--json", action="store_true", help="Print normalized machine-readable JSON.")
+    packet.add_argument("--save", help="Save JSON output to this path.")
+    packet.add_argument("--timeout", type=positive_int, default=60, help="HTTP timeout in seconds.")
     packet.set_defaults(func=cmd_source_packet)
 
-    neg = sub.add_parser("negative-search", help="Create a negative-search draft from a NARA query.")
+    neg = sub.add_parser("negative-search", help="Create a negative-search draft from a NARA query.", formatter_class=formatter)
     add_search_args(neg)
-    neg.add_argument("--threshold", type=int, default=0)
-    neg.add_argument("--json", action="store_true")
-    neg.add_argument("--save")
-    neg.add_argument("--timeout", type=positive_int, default=60)
+    neg.add_argument("--threshold", type=int, default=0, help="Mark counts above this threshold as not-yet-verified.")
+    neg.add_argument("--json", action="store_true", help="Print normalized machine-readable JSON.")
+    neg.add_argument("--save", help="Save JSON output to this path.")
+    neg.add_argument("--timeout", type=positive_int, default=60, help="HTTP timeout in seconds.")
     neg.set_defaults(func=cmd_negative_search)
 
-    summarize = sub.add_parser("summarize-file", help="Summarize JSON saved by this helper.")
-    summarize.add_argument("path")
+    summarize = sub.add_parser("summarize-file", help="Summarize JSON saved by this helper.", formatter_class=formatter)
+    summarize.add_argument("path", help="JSON file saved by search, record, images, or source-packet.")
     summarize.set_defaults(func=cmd_summarize_file)
     return parser
 

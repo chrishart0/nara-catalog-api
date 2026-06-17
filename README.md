@@ -1,143 +1,74 @@
 # NARA Catalog API Helper
 
-Agent-first, read-only helper for the National Archives Catalog API v2.
-
-The command-line tool is intentionally thin. Shared package code under `src/nara_catalog/`
-does the API calls, parsing, compaction, downloads, preservation drafts, and MCP
-tool wiring.
+Agent-first, read-only helper for the National Archives Catalog API v2. The CLI,
+Python API, and MCP server share the same package code under `src/nara_catalog/`.
 
 ## Setup
 
-1. Get an API key by emailing `Catalog_API@nara.gov` for a read-only key.
-2. Save it as `NARA_API_KEY=your-key-here` in the project `.env` file, or pass
-   `--secret-file /path/to/env`.
-
-The tool never prints the key.
-
-## Common Commands
-
-From this tool directory:
+Get a NARA Catalog API key by emailing `Catalog_API@nara.gov`, then use one of:
 
 ```bash
-# Verify configuration
-python nara_api.py check-key --live
+export NARA_API_KEY=your-key
+# or, from the repo root you run commands in:
+printf 'NARA_API_KEY=your-key\n' > .env
+# or:
+python nara_api.py --secret-file /path/to/nara.env check-key --live
+```
 
-# Search. Compact human-readable output is the default.
-python nara_api.py search --query '"Arthur Davis Variell"' --limit 10 --online
+Credential lookup order is environment, `--secret-file`, current working
+directory `.env`, then `~/.hermes/secrets/nara.env`. The tool never prints the
+key.
 
-# Machine-readable normalized JSON
-python nara_api.py search --query 'Variell AND passport' --online --json
+## Quick Start
 
-# Raw NARA API JSON
-python nara_api.py search --query 'Variell AND passport' --online --full
+```bash
+# Readable search results
+python nara_api.py search --query '"Arthur Davis Variell"' --online
 
-# Count-only scoping for negative-search work
+# Count-only scoping, optionally with a negative-search draft
 python nara_api.py search --query 'Variell' --online --count
-
-# Count plus negative-search draft
 python nara_api.py search --query '"Arthur D. Variell" passport' --online --count --negative-search-draft
 
-# Fetch a specific record by NAID
+# Fetch and preserve a record
 python nara_api.py record --naid 235845496 --save /tmp/nara-235845496.json
-
-# List digital object URLs in a flat format
-python nara_api.py images --naid 235845496
-
-# List digital objects and mark known local downloads
-python nara_api.py images --naid 235845496 --status-dir /tmp/nara-235845496
-
-# Download selected digital objects without overwriting existing files
-python nara_api.py images --naid 235845496 --download-dir /tmp/nara-235845496 --range 1-5
-
-# Browse hierarchy context
-python nara_api.py browse --naid 235845496
-
-# Related records
-python nara_api.py related --naid 235845496 --mode same-series --limit 10
-
-# Repository-style source packet draft
 python nara_api.py source-packet --naid 235845496 --source-id S061 --archive-root ../..
 
-# Source packet including a previous download manifest
-python nara_api.py source-packet --naid 235845496 --source-id S061 --archive-root ../.. --download-manifest /tmp/nara-235845496/nara-235845496-download-manifest.json
+# List or download digital objects
+python nara_api.py images --naid 235845496
+python nara_api.py images --naid 235845496 --download-dir /tmp/nara-235845496 --range 1-5
 
-# Negative-search draft
-python nara_api.py negative-search --query '"Arthur D. Variell" passport' --online
+# Browse related context
+python nara_api.py browse --naid 235845496 --siblings
+python nara_api.py related --naid 235845496 --mode same-series
 ```
 
-## Credential Resolution
+Use `--json` for normalized JSON and `--full` for raw NARA API JSON. Run
+`python nara_api.py COMMAND --help` for command-specific options.
 
-The helper looks for `NARA_API_KEY` in this order:
+## Workflow Notes
 
-1. `NARA_API_KEY` environment variable
-2. `--secret-file /path/to/file`, if passed
-3. `.env` in the current working directory
-4. `~/.hermes/secrets/nara.env`
-
-## Output Modes
-
-`search` prints compact text by default:
-
-```text
-Total: 2 results
-Returned: 2
-[1] NAID 235845496 - Volume 994: April 22 to 30, 1903
-    fileUnit | RG-59 | 816 digital objects | Fold3
-    https://catalog.archives.gov/id/235845496
-```
-
-Use `--json` for normalized structured output. Use `--full` for raw NARA API
-JSON. `--save PATH` writes JSON output to disk.
-
-## Date Filters
-
-The CLI uses Python-friendly option names:
-
-- `--start-date` maps to NARA API parameter `startDate`
-- `--end-date` maps to NARA API parameter `endDate`
-
-NARA records often describe archival date ranges rather than event dates. Treat
-date filters as catalog search constraints, not proof that an event occurred
-inside the queried range.
-
-Examples:
-
-```bash
-python nara_api.py search --query 'passport Variell' --start-date 1903 --end-date 1903
-python nara_api.py search --query 'Variell' --start-date 1900 --end-date 1910
-python nara_api.py search --query '"Arthur Davis Variell"' --start-date 1903-04-01 --end-date 1903-04-30
-```
-
-## Downloads
-
-Downloads:
-
-- require an explicit destination;
-- do not overwrite existing files unless `--force` is passed;
-- compute SHA-256 for downloaded or existing skipped files;
-- stream to temporary files before atomically moving them into place;
-- write `nara-{naid}-download-manifest.json`.
-
-When downloading from search results, use `--download-record-limit` and `--yes`
-to make bulk intent explicit. Search-result downloads also enforce
-`--download-object-limit` unless `--range` or `--yes` is supplied. Use
-`--max-bytes` to cap individual digital-object downloads.
-
-## Rate Limit Awareness
+- `search` defaults to compact terminal output.
+- `--start-date` and `--end-date` map to NARA `startDate` and `endDate`.
+- Date filters are catalog constraints, not proof of event dates.
+- Downloads never overwrite unless `--force` is passed.
+- Downloads stream to temporary files, compute SHA-256, and write
+  `nara-{naid}-download-manifest.json`.
+- Search-result downloads enforce `--download-record-limit` and
+  `--download-object-limit`; use `--range` or `--yes` for explicit bulk intent.
+- Source IDs must match `S###`, `R###`, `C###`, or `N###` with an optional
+  alphanumeric, underscore, or dash suffix.
 
 NARA documents a default Catalog API limit of 10,000 queries per month per API
-key. The limit resets on the first day of each month; higher limits require
-contacting `Catalog_API@nara.gov` with a use case and justification. Keep search
-limits small, prefer `--count` for scoping, and avoid unbounded search-result
-downloads.
+key. Keep searches small and prefer `--count` for scoping.
 
 ## Python API
 
 ```python
+from pathlib import Path
 from nara_catalog.models import SearchRequest
 from nara_catalog.service import NaraCatalogService
 
-service = NaraCatalogService.from_environment()
+service = NaraCatalogService.from_environment(project_dir=Path.cwd())
 result = service.search_records(SearchRequest(
     query='"Arthur Davis Variell" passport',
     online=True,
@@ -147,28 +78,15 @@ result = service.search_records(SearchRequest(
 
 ## MCP Server
 
-The MCP server is local stdio-first and uses the official Python SDK through the
-optional `mcp` extra:
-
 ```bash
 pip install -e '.[mcp]'
 nara-mcp
 ```
 
-The implementation targets the MCP `2025-11-25` specification and the stable
-`mcp` Python SDK v1 line. It exposes read-only tools for search, count, record
-fetch, image listing/download, hierarchy, related records, source-packet drafts,
-and negative-search drafts. MCP outputs scrub key-source metadata so API key
-locations are not returned to clients.
-
-MCP write tools are disabled by default. To allow `nara_download_digital_objects`
-or `nara_make_source_packet`, set `NARA_MCP_WRITE_ROOT` to a local directory.
-Those tools reject paths outside that root and return relative paths to MCP
-clients.
-
-Source packet IDs are validated as `S###`, `R###`, `C###`, or `N###` with an
-optional alphanumeric, underscore, or dash suffix. Existing packet files are not
-overwritten.
+The MCP server is local stdio-first and targets the MCP `2025-11-25`
+specification with the stable `mcp` Python SDK v1 line. Write tools are disabled
+unless `NARA_MCP_WRITE_ROOT` is set; paths outside that root are rejected and MCP
+responses scrub local filesystem details.
 
 ## Development
 
@@ -178,5 +96,5 @@ pytest
 RUN_NARA_INTEGRATION=1 pytest tests/integration
 ```
 
-Unit tests are offline and use fixtures. Integration tests are opt-in, require a
-configured `NARA_API_KEY`, and assert only broad live API invariants.
+Unit tests are offline. Live NARA tests are opt-in and assert broad API shape
+only.
