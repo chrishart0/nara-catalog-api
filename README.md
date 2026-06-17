@@ -42,7 +42,13 @@ python -m pip install -e '.[mcp]'
 
 ## Configure
 
-Get a NARA Catalog API key by emailing `Catalog_API@nara.gov`, then use one of:
+Get a NARA Catalog API key by emailing `Catalog_API@nara.gov`. A short request
+is usually enough; see the [API key request template](docs/nara-api-key-request-template.md).
+
+In project use, NARA has typically responded within about one business day.
+Keys are normally issued with a default limit of 10,000 API calls per month.
+
+After you receive a key, use one of:
 
 ```bash
 export NARA_API_KEY=your-key
