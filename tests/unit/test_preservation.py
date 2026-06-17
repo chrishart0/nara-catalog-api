@@ -28,9 +28,11 @@ def test_negative_search_draft_contains_query_filters_and_count() -> None:
 
 def test_source_packet_writes_raw_json_and_markdown(tmp_path: Path) -> None:
     service = NaraCatalogService(FakeClient(load_fixture("record_passport_with_digital_objects.json")), key_source="test")
+    assert not (tmp_path / "archive" / "nara").exists()
 
     packet = service.make_source_packet("235845496", "S061", tmp_path)
 
+    assert (tmp_path / "archive" / "nara" / "S061").is_dir()
     assert Path(packet.raw_json_path).exists()
     assert Path(packet.packet_path).exists()
     assert packet.raw_json_sha256

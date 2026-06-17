@@ -63,6 +63,18 @@ def emit_digital_objects(objects) -> None:
             print(f"    {obj.object_url}")
 
 
+def emit_record_compact(response) -> None:
+    compact = response.compact
+    print(f"NAID: {response.na_id} found={response.found}")
+    if not compact:
+        return
+    print(f"title: {compact.title}")
+    print(f"level: {compact.level_of_description} dates: {compact.dates}")
+    print(f"digitalObjects: {compact.digital_object_count}")
+    if compact.catalog_url:
+        print(f"url: {compact.catalog_url}")
+
+
 def _context_line(record) -> str:
     parts = []
     if record.level_of_description:
@@ -182,7 +194,8 @@ def cmd_search(args: argparse.Namespace) -> int:
         payload = {"search": response, "downloads": download_manifests} if download_manifests else response
         emit_json(payload, args.save)
     else:
-        emit_search_compact(response)
+        if not args.quiet:
+            emit_search_compact(response)
         if download_manifests:
             _print_download_totals(download_manifests)
     return 0
@@ -191,7 +204,12 @@ def cmd_search(args: argparse.Namespace) -> int:
 def cmd_record(args: argparse.Namespace) -> int:
     service = service_from_args(args)
     response = service.get_record(args.naid, include_extracted_text=args.include_extracted_text, timeout=args.timeout)
-    emit_json(response.raw if args.full else response, args.save)
+    if args.full:
+        emit_json(response.raw, args.save)
+    elif args.json or args.save:
+        emit_json(response, args.save)
+    else:
+        emit_record_compact(response)
     return 0 if response.found else 1
 
 
@@ -211,7 +229,10 @@ def cmd_images(args: argparse.Namespace) -> int:
             timeout=args.timeout,
             max_bytes=args.max_bytes,
         )
-        emit_json(manifest, args.save) if args.json or args.save else _print_manifest(manifest)
+        if args.json or args.save:
+            emit_json(manifest, args.save)
+        else:
+            _print_manifest(manifest)
     elif args.json or args.save:
         emit_json(objects, args.save)
     else:
@@ -278,13 +299,52 @@ def cmd_negative_search(args: argparse.Namespace) -> int:
 
 def cmd_summarize_file(args: argparse.Namespace) -> int:
     data = json.loads(Path(args.path).expanduser().read_text())
-    if "records" in data:
+    if "mode" in data and "basis" in data:
+        print(f"NAID: {data.get('na_id')} mode: {data.get('mode')}")
+        print(f"basis: {json.dumps(data.get('basis'), ensure_ascii=False)}")
+        search = data.get("search") or {}
+        if search:
+            print(f"related_returned: {search.get('returned')} total: {search.get('total')}")
+    elif "search" in data and isinstance(data["search"], dict):
+        search = data["search"]
+        print(f"query: {search.get('query')}")
+        print(f"returned: {search.get('returned')} total: {search.get('total')}")
+        downloads = data.get("downloads") or []
+        if downloads:
+            print(f"download_manifests: {len(downloads)}")
+    elif "records" in data:
         print(f"query: {data.get('query')}")
         print(f"returned: {data.get('returned')} total: {data.get('total')}")
         for i, result in enumerate(data.get("records") or [], 1):
             print(f"\n[{i}] NAID {result.get('na_id')} - {result.get('title')}")
             print(f"    level: {result.get('level_of_description')} dates: {result.get('dates')}")
             print(f"    url: {result.get('catalog_url')}")
+    elif "source_id" in data and "packet_path" in data:
+        print(f"source_id: {data.get('source_id')} naid: {data.get('na_id')}")
+        print(f"packet: {data.get('packet_path')}")
+        print(f"raw_json: {data.get('raw_json_path')}")
+        print(f"downloaded_objects: {len(data.get('downloaded_object_paths') or [])}")
+    elif isinstance(data, list) and all(isinstance(item, dict) and "object_url" in item for item in data):
+        print(f"digitalObjects: {len(data)}")
+        for item in data[:10]:
+            status = "downloaded" if item.get("downloaded") else "not-downloaded"
+            print(f"[{item.get('index')}] {item.get('object_type')} | {item.get('file_name')} | {status}")
+            if item.get("object_url"):
+                print(f"    {item.get('object_url')}")
+        if len(data) > 10:
+            print(f"... {len(data) - 10} more")
+    elif "results" in data and "destination" in data:
+        results = data.get("results") or []
+        print(f"naid: {data.get('na_id')} destination: {data.get('destination')}")
+        print(f"downloaded={sum(1 for r in results if r.get('status') == 'downloaded')} skipped={sum(1 for r in results if str(r.get('status')).startswith('skipped'))} failed={sum(1 for r in results if r.get('status') == 'failed')}")
+    elif "ancestors" in data and "na_id" in data:
+        print(f"NAID: {data.get('na_id')}")
+        print(f"parent: {(data.get('parent') or {}).get('naId')}")
+        print(f"likely_series: {(data.get('likely_series') or {}).get('naId')}")
+        print(f"ancestors: {len(data.get('ancestors') or [])}")
+    elif "markdown" in data and "total_hits" in data:
+        print(f"query: {data.get('query')}")
+        print(f"total_hits: {data.get('total_hits')} confidence: {data.get('confidence')}")
     elif "results" in data:
         print(f"query: {data.get('query')}")
         print(f"params: {json.dumps(data.get('params'), ensure_ascii=False)}")
@@ -383,8 +443,9 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--download-dir", help="Download digital objects from returned records into this directory.")
     search.add_argument("--download-record-limit", type=positive_int, default=5, help="Maximum returned records to download from.")
     search.add_argument("--download-object-limit", type=positive_int, default=25, help="Maximum estimated objects to download without --yes or --range.")
-    search.add_argument("--range", help="Digital-object indexes or ranges to download, e.g. 1,3-5. Default all.")
+    search.add_argument("--range", help="Inclusive digital-object indexes/ranges, e.g. 1,3-5. Out-of-range indexes are skipped; open-ended ranges are not supported. Use images first to see count.")
     search.add_argument("--force", action="store_true", help="Allow downloads to overwrite existing files.")
+    search.add_argument("--quiet", action="store_true", help="For downloads, print only the final download summary.")
     search.add_argument("--yes", action="store_true", help="Confirm potentially large search-result downloads.")
     search.add_argument("--max-bytes", type=positive_int, help="Maximum bytes per digital object download.")
     search.add_argument("--timeout", type=positive_int, default=60, help="HTTP timeout in seconds.")
@@ -393,7 +454,8 @@ def build_parser() -> argparse.ArgumentParser:
     record = sub.add_parser("record", help="Fetch a single record by NAID using naId_is.", formatter_class=formatter)
     record.add_argument("--naid", required=True, help="NARA National Archives Identifier.")
     record.add_argument("--include-extracted-text", action="store_true", help="Request OCR/extracted text where supported.")
-    record.add_argument("--json", action="store_true", help="Accepted for consistency; record output is JSON by default.")
+    record.add_argument("--compact", action="store_true", help="Explicitly request compact text output; this is already the default.")
+    record.add_argument("--json", action="store_true", help="Print normalized machine-readable JSON.")
     record.add_argument("--full", action="store_true", help="Print/save raw NARA API JSON.")
     record.add_argument("--save", help="Save JSON output to this path.")
     record.add_argument("--timeout", type=positive_int, default=60, help="HTTP timeout in seconds.")
@@ -405,8 +467,9 @@ def build_parser() -> argparse.ArgumentParser:
     images.add_argument("--save", help="Save JSON output or download manifest to this path.")
     images.add_argument("--download-dir", help="Download digital objects into this directory.")
     images.add_argument("--status-dir", help="When listing, mark objects downloaded if their expected files exist in this directory.")
-    images.add_argument("--range", help="Digital-object indexes or ranges, e.g. 1,3-5. Default all.")
+    images.add_argument("--range", help="Inclusive digital-object indexes/ranges, e.g. 1,3-5. Out-of-range indexes are skipped; open-ended ranges are not supported. Use images first to see count.")
     images.add_argument("--force", action="store_true", help="Allow downloads to overwrite existing files.")
+    images.add_argument("--quiet", action="store_true", help="For downloads, print only the final manifest summary.")
     images.add_argument("--max-bytes", type=positive_int, help="Maximum bytes per digital object download.")
     images.add_argument("--timeout", type=positive_int, default=60, help="HTTP timeout in seconds.")
     images.set_defaults(func=cmd_images)

@@ -91,11 +91,13 @@ nara-api search --query '"SEARCH TERMS"' --online --count
 nara-api search --query '"SEARCH TERMS"' --online --count --negative-search-draft
 
 # Fetch a record and create a preservation draft
+nara-api record --naid NAID
 nara-api record --naid NAID --save /tmp/nara-NAID.json
 nara-api source-packet --naid NAID --source-id S001 --archive-root /path/to/archive-root
 
 # List or download digital objects
 nara-api images --naid NAID
+nara-api images --naid NAID --status-dir /tmp/nara-NAID
 nara-api images --naid NAID --download-dir /tmp/nara-NAID --range 1-5
 
 # Browse hierarchy and related records
@@ -106,18 +108,30 @@ nara-api related --naid NAID --mode same-series
 Use `--json` for normalized JSON and `--full` for raw NARA API JSON. Run
 `nara-api COMMAND --help` for command-specific options.
 
+Saved JSON from `search`, `record`, `images`, `browse`, `related`,
+`source-packet`, and `negative-search` can be re-read with `summarize-file`.
+
 ## Output And Safety Notes
 
 - `search` defaults to compact terminal output.
+- `record` also defaults to compact terminal output; use `--json` for normalized
+  JSON or `--full` for raw NARA API JSON.
+- `images --status-dir PATH` marks expected files as already downloaded when
+  listing digital objects.
 - `--start-date` and `--end-date` map to NARA `startDate` and `endDate`.
 - Date filters are catalog constraints, not proof of event dates.
 - Downloads never overwrite unless `--force` is passed.
 - Downloads stream to temporary files, compute SHA-256, and write
   `nara-{naid}-download-manifest.json`.
+- `--range` is inclusive, e.g. `1,3-5`. Out-of-range indexes are skipped.
+  Open-ended ranges such as `5-` are not supported.
 - Search-result downloads enforce `--download-record-limit` and
   `--download-object-limit`; use `--range` or `--yes` for explicit bulk intent.
+- Use `--quiet` on download commands when scripts only need the final summary.
 - Source IDs must match `S###`, `R###`, `C###`, or `N###` with an optional
   alphanumeric, underscore, or dash suffix.
+- `source-packet` creates `archive/nara/SOURCE_ID` under `--archive-root` when
+  needed and refuses to overwrite existing packet files.
 
 NARA documents a default Catalog API limit of 10,000 queries per month per API
 key. Keep searches small and prefer `--count` for scoping.
@@ -146,7 +160,8 @@ nara-mcp
 The MCP server is local stdio-first and targets the MCP `2025-11-25`
 specification with the stable `mcp` Python SDK v1 line. Write tools are disabled
 unless `NARA_MCP_WRITE_ROOT` is set; paths outside that root are rejected and MCP
-responses scrub local filesystem details.
+responses scrub local filesystem details and key-source labels. Use the CLI when
+you need full local path output.
 
 ## Development
 
