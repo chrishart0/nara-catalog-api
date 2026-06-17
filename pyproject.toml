@@ -13,7 +13,22 @@ license-files = ["LICENSE"]
 authors = [
   {name = "Chris Hart"},
 ]
-keywords = ["nara", "archives", "cli", "mcp", "research", "genealogy", "history"]
+keywords = [
+  "nara",
+  "national-archives",
+  "archives",
+  "archival-research",
+  "cli",
+  "python",
+  "mcp",
+  "model-context-protocol",
+  "research-agent",
+  "ai-agents",
+  "genealogy",
+  "historical-research",
+  "digital-humanities",
+  "api-client",
+]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
@@ -31,6 +46,12 @@ classifiers = [
 dependencies = [
   "requests>=2.31",
 ]
+
+[project.urls]
+Homepage = "https://github.com/chrishart0/nara-catalog-api"
+Repository = "https://github.com/chrishart0/nara-catalog-api"
+Issues = "https://github.com/chrishart0/nara-catalog-api/issues"
+Documentation = "https://github.com/chrishart0/nara-catalog-api#readme"
 
 [project.optional-dependencies]
 mcp = ["mcp>=1.27,<2"]

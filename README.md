@@ -1,5 +1,9 @@
 # NARA Catalog Agent CLI
 
+[![CI](https://github.com/chrishart0/nara-catalog-api/actions/workflows/ci.yml/badge.svg)](https://github.com/chrishart0/nara-catalog-api/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+
 Agent-first command-line tool for the National Archives Catalog API v2, with a
 shared Python API and optional MCP server.
 
@@ -9,6 +13,10 @@ preservation-safe source packets without hand-inspecting nested API responses.
 
 This project is read-only against NARA and is not affiliated with the National
 Archives and Records Administration.
+
+Keywords: NARA, National Archives, archival research, historical research,
+genealogy, digital humanities, research agents, AI agents, Model Context
+Protocol, MCP, Python CLI.
 
 ## Why Agent-First?
 
@@ -21,7 +29,7 @@ Archives and Records Administration.
 ## Install
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/chrishart0/nara-catalog-api.git
 cd nara-catalog-api
 python -m pip install -e '.[test]'
 ```
